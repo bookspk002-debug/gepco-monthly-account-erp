@@ -1,0 +1,66 @@
+:root{
+  --green:#0F3B2E; --green2:#14532d; --gold:#E8B931; --bg:#f4f6f5; --card:#fff;
+  --text:#1c2420; --muted:#6b7770; --border:#d8e0db; --red:#b3261e; --amber:#9a6a00;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+#app{display:flex;min-height:100vh}
+#sidebar{width:230px;background:var(--green);color:#fff;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow:auto}
+.brand{display:flex;gap:10px;align-items:center;padding:16px;border-bottom:1px solid rgba(255,255,255,.15)}
+.brand-logo{width:40px;height:40px;border-radius:10px;background:var(--gold);color:var(--green);font-weight:800;font-size:22px;display:flex;align-items:center;justify-content:center}
+.brand-name{font-weight:800;font-size:17px}
+.brand-sub{font-size:11px;opacity:.8}
+.unit-box{padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.15);font-size:12px}
+.unit-box select{width:100%;margin-top:4px;padding:6px;border-radius:6px;border:none;font-size:13px}
+#nav{display:flex;flex-direction:column;padding:8px;gap:2px;flex:1}
+#nav button{background:none;border:none;color:#e8f0ec;text-align:left;padding:9px 10px;border-radius:8px;cursor:pointer;font-size:13px}
+#nav button:hover{background:rgba(255,255,255,.1)}
+#nav button.active{background:var(--gold);color:var(--green);font-weight:700}
+.side-foot{padding:12px 16px;font-size:11px;color:#bcd0c6;border-top:1px solid rgba(255,255,255,.15)}
+.muted{color:var(--muted);font-size:12px}
+#sidebar .muted{color:#bcd0c6}
+#main{flex:1;padding:20px;min-width:0}
+h1{font-size:20px;margin:0 0 4px;color:var(--green)}
+h2{font-size:15px;margin:18px 0 8px;color:var(--green)}
+.sub{color:var(--muted);margin-bottom:14px;font-size:13px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px}
+.stat .label{font-size:12px;color:var(--muted)}
+.stat .value{font-size:18px;font-weight:800;margin-top:4px;color:var(--green)}
+.stat .value.red{color:var(--red)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--green);color:#fff;text-align:left;padding:8px;font-weight:600;position:sticky;top:0}
+td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+tr.total td{font-weight:800;background:#eaf2ee}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+th.num{text-align:right}
+.btn{background:var(--green);color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+.btn:hover{background:var(--green2)}
+.btn.gold{background:var(--gold);color:var(--green)}
+.btn.ghost{background:#fff;color:var(--green);border:1px solid var(--green)}
+.btn.danger{background:var(--red)}
+.btn.small{padding:4px 9px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+input,select,textarea{padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit}
+input.num-in{text-align:right;width:150px}
+textarea{width:100%;min-height:90px}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700}
+.badge.ok{background:#dff2e3;color:#14532d}
+.badge.bad{background:#fbe3e1;color:var(--red)}
+.badge.warn{background:#fdf0d5;color:var(--amber)}
+.badge.bs{background:#e3ecff;color:#1d4ed8}
+.badge.op{background:#f3e8fd;color:#6d28d9}
+.table-wrap{overflow:auto;max-height:62vh;border:1px solid var(--border);border-radius:10px}
+#toast{position:fixed;bottom:18px;right:18px;background:var(--green);color:#fff;padding:12px 16px;border-radius:10px;display:none;max-width:420px;box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:50}
+.kv{display:grid;grid-template-columns:220px 1fr;gap:6px 12px;font-size:13px}
+.kv b{color:var(--green)}
+.jv-line{display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap}
+.jv-line input.code{width:130px}
+.jv-line input.amt{width:150px;text-align:right}
+@media (max-width:820px){
+  #app{flex-direction:column}
+  #sidebar{width:100%;height:auto;position:static}
+  #nav{flex-direction:row;flex-wrap:wrap}
+}

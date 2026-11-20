@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEPCO Monthly Account ERP — RO Hafizabad (HFR)</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="brand-logo">G</div>
+      <div>
+        <div class="brand-name">GEPCO ERP</div>
+        <div class="brand-sub">Monthly Account</div>
+      </div>
+    </div>
+    <div class="unit-box">
+      <div id="unitName">RO GEPCO Hafizabad</div>
+      <div class="muted">Code: <span id="unitCode">HFR</span></div>
+      <label class="muted">Current Month</label>
+      <select id="monthSelect"></select>
+      <div id="monthStatus" class="muted"></div>
+    </div>
+    <nav id="nav">
+      <button data-view="dashboard" class="active">Dashboard</button>
+      <button data-view="coa">Chart of Accounts</button>
+      <button data-view="cp41">CP-41 Entry</button>
+      <button data-view="payroll">Payroll Entry</button>
+      <button data-view="cp91">CP-91 Entry</button>
+      <button data-view="summaries">Ledger Posting Summaries</button>
+      <button data-view="jv">Journal Vouchers</button>
+      <button data-view="trial">Trial Balance</button>
+      <button data-view="advices">Dr / Cr Advices</button>
+      <button data-view="cheques">SS Cheques</button>
+      <button data-view="current">Current Account</button>
+      <button data-view="close">Month / Year Close</button>
+      <button data-view="checks">Checks</button>
+      <button data-view="backup">Backup / Data</button>
+    </nav>
+    <div class="side-foot muted">Database: browser (IndexedDB)<br>Data isi computer par rehta hai</div>
+  </aside>
+  <main id="main">
+    <div id="view"></div>
+  </main>
+</div>
+<div id="toast"></div>
+<script src="seed-data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
