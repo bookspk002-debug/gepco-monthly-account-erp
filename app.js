@@ -67,7 +67,7 @@ function emptyMonth(opening) {
     cheques: [],
     cp41: { sale: [], other: [], taxes: [], rev: { collections: 0, bankActual: 0, consumerCr: 0, collExp: 0 } },
     payroll: { dr: [], cr: [] },
-    cp91: { rows: [], extra520603: 0, extra1501016: 0 },
+    cp91: { detail: (typeof SEED !== "undefined" ? SEED.cp91Detail.map((co) => ({ code: co.code, iot: co.iot, desc: co.desc, offices: co.offices.map((o) => ({ fs: o.fs, name: o.name, no: 0, amount: 0 })) })) : []), extra520603: 0, extra1501016: 0 },
     ca: { openA: 0, openB: 0, openC: 0, openD: 0, advRecvDr: 0, advRecvCr: 0, fundsRecv: 0, remitRev: 0, remitSec: 0, remitMisc: 0 }
   };
 }
@@ -88,7 +88,7 @@ function seedState() {
   m.cheques = SEED.ssCheques.map((c) => ({ id: uid(), office: c.office, cheque: c.cheque, date: c.date, amount: c.amount }));
   m.cp41 = { sale: JSON.parse(JSON.stringify(SEED.cp41Sale)), other: JSON.parse(JSON.stringify(SEED.cp41Other)), taxes: JSON.parse(JSON.stringify(SEED.cp41Taxes)), rev: { ...SEED.cp41Rev } };
   m.payroll = { dr: JSON.parse(JSON.stringify(SEED.payrollDr)), cr: JSON.parse(JSON.stringify(SEED.payrollCr)) };
-  m.cp91 = { rows: JSON.parse(JSON.stringify(SEED.cp91)), extra520603: 49004, extra1501016: 72046 };
+  m.cp91 = { detail: JSON.parse(JSON.stringify(SEED.cp91Detail)), extra520603: 49004, extra1501016: 72046 };
   m.ca = { openA: SEED.caOpening.A, openB: SEED.caOpening.B, openC: SEED.caOpening.C, openD: SEED.caOpening.D, advRecvDr: 21289541, advRecvCr: 1214631786.92, fundsRecv: 69615, remitRev: 1176053625, remitSec: 1266136, remitMisc: 0 };
   return {
     unit: SEED.unit, unitCode: SEED.unitCode, currentMonth: SEED.month,
@@ -101,7 +101,15 @@ async function save() { await idbSet("state", S); }
 async function load() {
   const saved = await idbGet("state");
   S = saved && saved.coa ? saved : seedState();
-  if (!saved) await save();
+  // migration: purane saved data mein cp91.detail na ho to seed se layein
+  Object.entries(S.months).forEach(([mk, mm]) => {
+    if (mm.cp91 && !mm.cp91.detail) {
+      const isJuly = mk === SEED.month;
+      mm.cp91 = { detail: JSON.parse(JSON.stringify(SEED.cp91Detail)).map((co) => ({ ...co, offices: co.offices.map((o) => ({ ...o, amount: isJuly ? o.amount : 0, no: isJuly ? o.no : 0 })) })), extra520603: mm.cp91.extra520603 || 0, extra1501016: mm.cp91.extra1501016 || 0 };
+    }
+    if (!mm.ca) mm.ca = emptyMonth({}).ca;
+  });
+  await save();
 }
 
 function M() { return S.months[S.currentMonth]; }
@@ -174,9 +182,9 @@ function render() {
   document.getElementById("unitName").textContent = S.unit;
   document.getElementById("unitCode").textContent = S.unitCode;
   document.getElementById("monthStatus").textContent = M().status === "closed" ? "Status: CLOSED (locked)" : "Status: Open";
-  const views = { dashboard: vDashboard, coa: vCOA, cp41: vCP41, payroll: vPayroll, cp91: vCP91, summaries: vSummaries, jv: vJV, trial: vTrial, advices: vAdvices, cheques: vCheques, current: vCurrent, close: vClose, checks: vChecks, backup: vBackup };
+  const views = { dashboard: vDashboard, coa: vCOA, opening: vOpening, cp41: vCP41, payroll: vPayroll, cp91: vCP91, summaries: vSummaries, jv: vJV, trial: vTrial, advices: vAdvices, cheques: vCheques, current: vCurrent, close: vClose, checks: vChecks, backup: vBackup };
   document.getElementById("view").innerHTML = views[currentView]();
-  const bind = { dashboard: bDashboard, coa: bCOA, cp41: bCP41, payroll: bPayroll, cp91: bCP91, summaries: bSummaries, jv: bJV, trial: bTrial, advices: bAdvices, cheques: bCheques, current: bCurrent, close: bClose, checks: bChecks, backup: bBackup };
+  const bind = { dashboard: bDashboard, coa: bCOA, opening: bOpening, cp41: bCP41, payroll: bPayroll, cp91: bCP91, summaries: bSummaries, jv: bJV, trial: bTrial, advices: bAdvices, cheques: bCheques, current: bCurrent, close: bClose, checks: bChecks, backup: bBackup };
   if (bind[currentView]) bind[currentView]();
 }
 document.querySelectorAll("#nav button").forEach((b) => b.addEventListener("click", () => { currentView = b.dataset.view; render(); }));
@@ -255,6 +263,102 @@ function bCOA() {
   };
 }
 
+
+// ---------- File reading helper (CSV / Excel) ----------
+async function readFileRows(file, sheetName) {
+  if (/\.csv$|\.txt$/i.test(file.name)) {
+    const text = await file.text();
+    return text.split(/\r?\n/).map((l) => l.split(/[,\t;]/));
+  }
+  if (!window.XLSX) throw new Error("Excel parhne ke liye internet chahiye — CSV use karein");
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf);
+  const name = sheetName && wb.Sheets[sheetName] ? sheetName : wb.SheetNames[0];
+  return XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1 });
+}
+async function readWorkbookSheets(file) {
+  if (!window.XLSX) throw new Error("Excel parhne ke liye internet chahiye — CSV use karein");
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf);
+  const out = {};
+  wb.SheetNames.forEach((n) => (out[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1 })));
+  return out;
+}
+
+// ---------- Opening Balances ----------
+let openingPreview = null;
+function vOpening() {
+  const m = M();
+  let td = 0, tc = 0;
+  const rows = S.coa.map((c, i) => {
+    const op = m.opening[c.code] || { dr: 0, cr: 0 };
+    td += num(op.dr); tc += num(op.cr);
+    return `<tr><td>${i + 1}</td><td><b>${esc(c.code)}</b></td><td>${esc(c.desc)}</td>
+    <td><input class="num-in op-dr" data-code="${esc(c.code)}" value="${op.dr}"></td>
+    <td><input class="num-in op-cr" data-code="${esc(c.code)}" value="${op.cr}"></td></tr>`;
+  }).join("");
+  const prev = openingPreview ? `<div class="card"><h2 style="margin-top:0">Import Preview — ${openingPreview.length} codes</h2>
+    <p class="muted">Import karne se in codes ke Opening balances replace ho jayenge (baqi codes waisay hi rahenge).</p>
+    <div class="table-wrap"><table><tr><th>GL Code</th><th class="num">Dr</th><th class="num">Cr</th><th>COA mein hai?</th></tr>
+    ${openingPreview.slice(0, 40).map((r) => `<tr><td>${esc(r.code)}</td><td class="num">${fmt(r.dr)}</td><td class="num">${fmt(r.cr)}</td><td>${coaMap()[r.code] ? '<span class="badge ok">Haan</span>' : '<span class="badge bad">Nahi — skip hoga</span>'}</td></tr>`).join("")}</table></div>
+    <div class="row"><button class="btn gold" id="opImportBtn">Opening Balances Import karein</button><button class="btn ghost" id="opCancelPrev">Cancel</button></div></div>` : "";
+  return `<h1>Opening Balances — ${monthLabel(S.currentMonth)}</h1>
+  <div class="sub">Previous month ke Closing balances. Total Dr ${fmt(td)} | Total Cr ${fmt(tc)} | Difference ${fmt(td - tc)}</div>
+  ${lockNote()}
+  <div class="card"><h2 style="margin-top:0">Previous Balances Upload / Import karein</h2>
+  <p class="muted">Excel/CSV file mein columns hon: <b>GL Code, Dr, Cr</b> (header ho ya na ho). Ya box mein paste karein.</p>
+  <div class="row"><input type="file" id="opFile" accept=".csv,.xlsx,.xls,.txt">
+  <button class="btn ghost" id="opCsv">Opening Balances CSV Download (Export)</button>
+  <button class="btn ghost" id="opPrint">Print Opening Balances</button></div>
+  <textarea id="opPaste" placeholder="Paste karein — har line: GL Code, Dr, Cr"></textarea>
+  <div class="row"><button class="btn" id="opParsePaste">Paste ko parhein</button></div></div>
+  ${prev}
+  <div class="table-wrap"><table><tr><th>Sr</th><th>GL Code</th><th>Description</th><th class="num">Opening Dr</th><th class="num">Opening Cr</th></tr>${rows}
+  <tr class="total"><td colspan="3">TOTAL</td><td class="num">${fmt(td)}</td><td class="num">${fmt(tc)}</td></tr></table></div>`;
+}
+function parseOpeningRows(rows) {
+  const out = [];
+  rows.forEach((r) => {
+    const cells = r.map((x) => String(x ?? "").trim());
+    if (cells.length < 3) return;
+    if (/code/i.test(cells[0]) && /dr/i.test(cells.join(" "))) return;
+    // formats: Code,Dr,Cr  OR  Sr,Code,Desc,Dr,Cr  OR  Code,Desc,Dr,Cr
+    let code, dr, cr;
+    if (cells.length >= 5) { code = cells[1]; dr = cells[3]; cr = cells[4]; }
+    else if (cells.length === 4) { code = cells[0]; dr = cells[2]; cr = cells[3]; }
+    else { [code, dr, cr] = cells; }
+    if (!code || !/^[0-9]/.test(code)) return;
+    out.push({ code, dr: num(dr), cr: num(cr) });
+  });
+  return out;
+}
+function bOpening() {
+  document.querySelectorAll(".op-dr").forEach((el) => el.onchange = async () => { const c = el.dataset.code; M().opening[c] = M().opening[c] || { dr: 0, cr: 0 }; M().opening[c].dr = num(el.value); await save(); });
+  document.querySelectorAll(".op-cr").forEach((el) => el.onchange = async () => { const c = el.dataset.code; M().opening[c] = M().opening[c] || { dr: 0, cr: 0 }; M().opening[c].cr = num(el.value); await save(); });
+  document.getElementById("opFile").onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try { openingPreview = parseOpeningRows(await readFileRows(f)); toast(openingPreview.length + " codes mile — preview dekhein"); render(); }
+    catch (err) { toast("Upload fail: " + err.message); }
+  };
+  document.getElementById("opParsePaste").onclick = () => {
+    openingPreview = parseOpeningRows(document.getElementById("opPaste").value.split(/\r?\n/).map((l) => l.split(/[,\t;]/)));
+    toast(openingPreview.length + " codes mile — preview dekhein"); render();
+  };
+  const imp = document.getElementById("opImportBtn");
+  if (imp) imp.onclick = async () => {
+    let n = 0;
+    openingPreview.forEach((r) => { if (coaMap()[r.code]) { M().opening[r.code] = { dr: r.dr, cr: r.cr }; n++; } });
+    openingPreview = null; await save(); toast(n + " codes ke Opening balances import ho gaye"); render();
+  };
+  const cp = document.getElementById("opCancelPrev");
+  if (cp) cp.onclick = () => { openingPreview = null; render(); };
+  document.getElementById("opCsv").onclick = () => downloadCSV("opening-balances-" + S.currentMonth + ".csv", [["GL Code", "Description", "Dr", "Cr"], ...S.coa.map((c) => [c.code, c.desc, (M().opening[c.code] || {}).dr || 0, (M().opening[c.code] || {}).cr || 0])]);
+  document.getElementById("opPrint").onclick = () => {
+    const rows = S.coa.map((c, i) => { const op = M().opening[c.code] || { dr: 0, cr: 0 }; return `<tr><td>${i + 1}</td><td>${esc(c.code)}</td><td>${esc(c.desc)}</td><td class="num">${fmt(op.dr)}</td><td class="num">${fmt(op.cr)}</td></tr>`; }).join("");
+    printDoc("Opening Balances", `<table><tr><th>Sr</th><th>GL Code</th><th>Description</th><th class="num">Dr</th><th class="num">Cr</th></tr>${rows}</table>`);
+  };
+}
+
 // ---------- CP-41 ----------
 function cp41Totals() {
   const c = M().cp41;
@@ -293,7 +397,13 @@ function vCP41() {
     <b>Collection Exp adj (710000 Dr)</b><span><input class="num-in cp41-rev" data-k="collExp" value="${c.rev.collExp}"></span>
   </div>
   <div class="row"><button class="btn gold" id="genCP41" ${locked() ? "disabled" : ""}>Generate Summaries (Folio 3 + 4)</button>
-  <button class="btn ghost" id="printCP41">Print CP-41</button></div></div>`;
+  <button class="btn ghost" id="printCP41">Print CP-41</button></div>
+  <h2>CP-41 Upload / Export</h2>
+  <p class="muted">Sale upload: columns <b>Category, GL Code, Variable, Fix, LPF, AQTA</b>. Taxes upload: <b>Tax, Receivable Code, Payable Code, Collection Code, OB, Assessment, Payments, Commission</b>.</p>
+  <div class="row"><label>Sale file: <input type="file" id="cp41SaleFile" accept=".csv,.xlsx,.xls,.txt"></label>
+  <label>Taxes file: <input type="file" id="cp41TaxFile" accept=".csv,.xlsx,.xls,.txt"></label></div>
+  <div class="row"><button class="btn ghost" id="cp41SaleCsv">Sale CSV Download (Export)</button>
+  <button class="btn ghost" id="cp41TaxCsv">Taxes CSV Download (Export)</button></div></div>`;
 }
 function bCP41() {
   const upd = async (fn) => { fn(); await save(); render(); };
@@ -323,6 +433,40 @@ function bCP41() {
     replaceBatch("CP41-GEN", lines);
     await save(); toast("CP-41 se " + lines.length + " summary lines ban gayi (Folio 3+4)"); currentView = "summaries"; render();
   };
+  document.getElementById("cp41SaleFile").onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const rows = await readFileRows(f); let n = 0;
+      rows.forEach((r) => {
+        const cells = r.map((x) => String(x ?? "").trim());
+        let code, v, fx, l, a;
+        if (cells.length >= 6) { code = cells[1]; [, , v, fx, l, a] = cells; }
+        else if (cells.length === 5) { [code, v, fx, l, a] = cells; }
+        else return;
+        const row = M().cp41.sale.find((x) => x.code === code);
+        if (row) { row.var = num(v); row.fix = num(fx); row.lpf = num(l); row.aqta = num(a); n++; }
+      });
+      await save(); toast(n + " sale categories update ho gayi"); render();
+    } catch (err) { toast("Upload fail: " + err.message); }
+  };
+  document.getElementById("cp41TaxFile").onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const rows = await readFileRows(f); let n = 0;
+      rows.forEach((r) => {
+        const cells = r.map((x) => String(x ?? "").trim());
+        let rec, ob, ass, pmt, comm;
+        if (cells.length >= 8) { rec = cells[1]; ob = cells[4]; ass = cells[5]; pmt = cells[6]; comm = cells[7]; }
+        else if (cells.length === 5) { [rec, ob, ass, pmt, comm] = cells; }
+        else return;
+        const row = M().cp41.taxes.find((x) => x.rec === rec);
+        if (row) { row.ob = num(ob); row.ass = num(ass); row.pmt = num(pmt); row.comm = num(comm); n++; }
+      });
+      await save(); toast(n + " taxes update ho gayi"); render();
+    } catch (err) { toast("Upload fail: " + err.message); }
+  };
+  document.getElementById("cp41SaleCsv").onclick = () => downloadCSV("cp41-sale-" + S.currentMonth + ".csv", [["Category", "GL Code", "Variable", "Fix Charges", "LPF", "AQTA", "Total"], ...M().cp41.sale.map((r) => [r.cat, r.code, r.var, r.fix, r.lpf, r.aqta, num(r.var) + num(r.fix) + num(r.lpf) + num(r.aqta)])]);
+  document.getElementById("cp41TaxCsv").onclick = () => downloadCSV("cp41-taxes-" + S.currentMonth + ".csv", [["Tax", "Receivable Code", "Payable Code", "Collection Code", "OB", "Assessment", "Payments", "Commission", "CB"], ...M().cp41.taxes.map((r) => [r.name, r.rec, r.pay || "", r.col, r.ob, r.ass, r.pmt, r.comm, num(r.ob) + num(r.ass) - num(r.pmt)])]);
   document.getElementById("printCP41").onclick = () => {
     const c = M().cp41; const t = cp41Totals();
     const saleRows = c.sale.map((r) => `<tr><td>${esc(r.cat)}</td><td class="num">${fmt(r.var)}</td><td class="num">${fmt(r.fix)}</td><td class="num">${fmt(r.lpf)}</td><td class="num">${fmt(r.aqta)}</td><td class="num">${fmt(num(r.var) + num(r.fix) + num(r.lpf) + num(r.aqta))}</td></tr>`).join("");
@@ -354,7 +498,11 @@ function vPayroll() {
   <tr class="total"><td colspan="2">TOTAL DEDUCTIONS</td><td class="num">${fmt(ded)}</td></tr>
   <tr class="total"><td colspan="2">NET PAY (302100 Cr)</td><td class="num">${fmt(gross - ded)}</td></tr></table>
   <div class="row"><button class="btn gold" id="genPay" ${locked() ? "disabled" : ""}>Generate Summaries (Folio 1)</button>
-  <button class="btn ghost" id="printPay">Print Payroll Summary</button></div></div>`;
+  <button class="btn ghost" id="printPay">Print Payroll Summary</button></div>
+  <h2>Payroll Upload / Export</h2>
+  <p class="muted">Upload columns: <b>Type (Dr/Cr), Name, GL Code, Amount</b> — poori payroll list replace ho jayegi.</p>
+  <div class="row"><input type="file" id="payFile" accept=".csv,.xlsx,.xls,.txt">
+  <button class="btn ghost" id="payCsv">Payroll CSV Download (Export)</button></div></div>`;
 }
 function bPayroll() {
   document.querySelectorAll(".pay-dr").forEach((el) => el.onchange = async () => { M().payroll.dr[+el.dataset.i].amount = num(el.value); await save(); render(); });
@@ -369,6 +517,23 @@ function bPayroll() {
     replaceBatch("PAYROLL-GEN", lines);
     await save(); toast("Payroll se " + lines.length + " lines ban gayi (Folio 1)"); currentView = "summaries"; render();
   };
+  document.getElementById("payFile").onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const rows = await readFileRows(f); const dr = [], cr = [];
+      rows.forEach((r) => {
+        const cells = r.map((x) => String(x ?? "").trim());
+        if (cells.length < 4 || /type/i.test(cells[0])) return;
+        const item = { name: cells[1], code: cells[2], amount: num(cells[3]) };
+        if (!item.code) return;
+        (/cr/i.test(cells[0]) ? cr : dr).push(item);
+      });
+      if (!dr.length && !cr.length) return toast("Payroll data nahi mila — format check karein");
+      if (!confirm("Payroll list replace karein? Dr " + dr.length + " lines, Cr " + cr.length + " lines mili hain.")) return;
+      M().payroll = { dr, cr }; await save(); toast("Payroll import ho gaya"); render();
+    } catch (err) { toast("Upload fail: " + err.message); }
+  };
+  document.getElementById("payCsv").onclick = () => downloadCSV("payroll-" + S.currentMonth + ".csv", [["Type", "Name", "GL Code", "Amount"], ...M().payroll.dr.map((r) => ["Dr", r.name, r.code, r.amount]), ...M().payroll.cr.map((r) => ["Cr", r.name, r.code, r.amount])]);
   document.getElementById("printPay").onclick = () => {
     const p = M().payroll; const gross = p.dr.reduce((s, r) => s + num(r.amount), 0), ded = p.cr.reduce((s, r) => s + num(r.amount), 0);
     const dr = p.dr.map((r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.code)}</td><td class="num">${fmt(r.amount)}</td></tr>`).join("");
@@ -377,43 +542,137 @@ function bPayroll() {
   };
 }
 
-// ---------- CP-91 ----------
+// ---------- CP-91 Detail & Abstract ----------
+function cp91Abstract() {
+  return M().cp91.detail.map((co) => ({
+    code: co.code, iot: co.iot, desc: co.desc,
+    amount: co.offices.reduce((s, o) => s + num(o.amount), 0),
+    count: co.offices.reduce((s, o) => s + num(o.no), 0)
+  }));
+}
 function vCP91() {
   const c = M().cp91;
-  const tot = c.rows.reduce((s, r) => s + num(r.amount), 0);
-  const rows = c.rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.code)}</td><td>${esc(r.iot)}</td><td>${esc(r.desc)}</td>
-    <td><input class="num-in cp91-amt" data-i="${i}" value="${r.amount}"></td></tr>`).join("");
-  return `<h1>CP-91 Entry — Free Electricity Supply</h1>
-  <div class="sub">Company-wise free supply. Total se Dr Advice (300101) aur Folio 3 ki CP-91 lines banti hain.</div>
+  const abs = cp91Abstract();
+  const grand = abs.reduce((s, r) => s + r.amount, 0);
+  const sections = c.detail.map((co, ci) => {
+    const tot = co.offices.reduce((s, o) => s + num(o.amount), 0);
+    const rows = co.offices.map((o, oi) => `<tr><td>${oi + 1}</td>
+      <td><input class="cp91-fs" data-ci="${ci}" data-oi="${oi}" value="${esc(o.fs)}" style="width:90px"></td>
+      <td><input class="cp91-name" data-ci="${ci}" data-oi="${oi}" value="${esc(o.name)}" style="width:340px"></td>
+      <td><input class="num-in cp91-no" data-ci="${ci}" data-oi="${oi}" value="${o.no}" style="width:80px"></td>
+      <td><input class="num-in cp91-amt" data-ci="${ci}" data-oi="${oi}" value="${o.amount}"></td>
+      <td><button class="btn small danger" data-del-office="${ci}:${oi}">✕</button></td></tr>`).join("");
+    return `<div class="card"><h2 style="margin-top:0">${esc(co.iot)} (${esc(co.code)}) — Total ${fmt(tot)}</h2>
+    <table><tr><th>Sr</th><th>F/S Code</th><th>Name and Address of Office</th><th class="num">No. of CP-91</th><th class="num">Amount</th><th></th></tr>${rows}
+    <tr class="total"><td colspan="4">TOTAL</td><td class="num">${fmt(tot)}</td><td></td></tr></table>
+    <div class="row"><button class="btn small ghost" data-add-office="${ci}">+ Office add karein</button></div></div>`;
+  }).join("");
+  const absRows = abs.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.code)}</td><td>${esc(r.iot)}</td><td>${esc(r.desc)}</td><td class="num">${fmt(r.amount)}</td></tr>`).join("");
+  return `<h1>CP-91 Detail & Abstract — ${monthLabel(S.currentMonth)}</h1>
+  <div class="sub">Pehle CP-91 detail (office-wise) bharein — Abstract khud banta hai. Grand Total: <b>${fmt(grand)}</b></div>
   ${lockNote()}
-  <div class="card"><div class="table-wrap"><table><tr><th>Sr</th><th>Code</th><th>Company</th><th>Description</th><th class="num">Amount</th></tr>${rows}
-  <tr class="total"><td colspan="4">TOTAL CP-91</td><td class="num">${fmt(tot)}</td></tr></table></div>
+  <div class="card"><h2 style="margin-top:0">CP-91 Upload karein (Excel / CSV)</h2>
+  <p class="muted">Aap ki CP-91 sheet wala format bhi chalega (company sections ke saath), ya simple columns: <b>Company Code, F/S Code, Office Name, No, Amount</b>.</p>
+  <div class="row"><input type="file" id="cp91File" accept=".csv,.xlsx,.xls,.txt">
+  <button class="btn ghost" id="cp91Csv">Detail CSV Download</button>
+  <button class="btn ghost" id="cp91AbsCsv">Abstract CSV Download</button></div></div>
+  ${sections}
+  <div class="card"><h2 style="margin-top:0">ABSTRACT CP-91 (Auto — Detail se bana)</h2>
+  <div class="table-wrap"><table><tr><th>Sr</th><th>Code</th><th>Company (IOT)</th><th>Description</th><th class="num">Amount</th></tr>${absRows}
+  <tr class="total"><td colspan="4">GRAND TOTAL</td><td class="num">${fmt(grand)}</td></tr></table></div>
   <div class="kv" style="margin-top:12px">
     <b>Free supply to Retd Employee (520603 Dr)</b><span><input class="num-in" id="cp91e1" value="${c.extra520603}"></span>
     <b>Free Supply Receivable (150101-6 Dr)</b><span><input class="num-in" id="cp91e2" value="${c.extra1501016}"></span>
   </div>
   <div class="row"><button class="btn gold" id="genCP91" ${locked() ? "disabled" : ""}>Generate Summaries (CP-91 lines)</button>
-  <button class="btn ghost" id="printCP91">Print CP-91 Abstract</button></div></div>`;
+  <button class="btn ghost" id="printCP91Detail">Print CP-91 Detail</button>
+  <button class="btn ghost" id="printCP91Abs">Print Abstract</button></div></div>`;
+}
+function parseCP91Rows(rows) {
+  // Format 1: CP-91 sheet style (company section headers)
+  const companies = []; let cur = null; let found = false;
+  rows.forEach((r) => {
+    const cells = r.map((x) => String(x ?? "").trim());
+    const joined = cells.join(" ");
+    if (/OFFICE\/CODE WISE DETAIL/i.test(joined)) {
+      const m = joined.match(/\((\d+)\)/);
+      const name = cells.find((x) => /OFFICE\/CODE/i.test(x)) || joined;
+      cur = { code: m ? m[1] : "", iot: name.split("(")[0].trim(), desc: "F.D " + name.split("(")[0].trim(), offices: [] };
+      companies.push(cur); found = true; return;
+    }
+    if (cur && cells.length >= 6) {
+      const [, sr, fs, name, no, amt] = cells;
+      if (name && !/Name and Adress/i.test(name) && !/Divisional Accounts/i.test(name) && sr !== "TOTAL" && (amt !== "" || fs !== "")) {
+        cur.offices.push({ fs, name, no: num(no), amount: num(amt) });
+      }
+    }
+  });
+  if (found && companies.some((c) => c.offices.length)) return companies;
+  // Format 2: simple columns CompanyCode, FSCode, OfficeName, No, Amount
+  const map = {};
+  rows.forEach((r) => {
+    const cells = r.map((x) => String(x ?? "").trim());
+    if (cells.length < 5 || /company/i.test(cells[0])) return;
+    const [code, fs, name, no, amt] = cells;
+    if (!code || !name) return;
+    map[code] = map[code] || { code, iot: code, desc: "F.D " + code, offices: [] };
+    map[code].offices.push({ fs, name, no: num(no), amount: num(amt) });
+  });
+  return Object.values(map);
 }
 function bCP91() {
-  document.querySelectorAll(".cp91-amt").forEach((el) => el.onchange = async () => { M().cp91.rows[+el.dataset.i].amount = num(el.value); await save(); render(); });
+  const upd = async (fn) => { fn(); await save(); render(); };
+  document.querySelectorAll(".cp91-fs").forEach((el) => el.onchange = () => upd(() => (M().cp91.detail[+el.dataset.ci].offices[+el.dataset.oi].fs = el.value)));
+  document.querySelectorAll(".cp91-name").forEach((el) => el.onchange = () => upd(() => (M().cp91.detail[+el.dataset.ci].offices[+el.dataset.oi].name = el.value)));
+  document.querySelectorAll(".cp91-no").forEach((el) => el.onchange = () => upd(() => (M().cp91.detail[+el.dataset.ci].offices[+el.dataset.oi].no = num(el.value))));
+  document.querySelectorAll(".cp91-amt").forEach((el) => el.onchange = () => upd(() => (M().cp91.detail[+el.dataset.ci].offices[+el.dataset.oi].amount = num(el.value))));
+  document.querySelectorAll("[data-del-office]").forEach((b) => b.onclick = () => { const [ci, oi] = b.dataset.delOffice.split(":").map(Number); upd(() => M().cp91.detail[ci].offices.splice(oi, 1)); });
+  document.querySelectorAll("[data-add-office]").forEach((b) => b.onclick = () => upd(() => M().cp91.detail[+b.dataset.addOffice].offices.push({ fs: "", name: "", no: 0, amount: 0 })));
   document.getElementById("cp91e1").onchange = async (e) => { M().cp91.extra520603 = num(e.target.value); await save(); };
   document.getElementById("cp91e2").onchange = async (e) => { M().cp91.extra1501016 = num(e.target.value); await save(); };
+  document.getElementById("cp91File").onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const rows = await readFileRows(f);
+      const companies = parseCP91Rows(rows);
+      if (!companies.length) return toast("CP-91 data nahi mila — format check karein");
+      if (!confirm(companies.length + " companies ki detail mili. Maujooda CP-91 detail replace karein?")) return;
+      // seed companies ke naam/desc barqarar rakhein jahan code match ho
+      const seedMap = {}; SEED.cp91Detail.forEach((c) => (seedMap[c.code] = c));
+      companies.forEach((c) => { if (seedMap[c.code]) { c.iot = seedMap[c.code].iot; c.desc = seedMap[c.code].desc; } });
+      M().cp91.detail = companies;
+      await save(); toast("CP-91 detail import ho gayi — Abstract auto ban gaya"); render();
+    } catch (err) { toast("Upload fail: " + err.message); }
+  };
+  document.getElementById("cp91Csv").onclick = () => {
+    const rows = [["Company Code", "Company", "F/S Code", "Office Name", "No of CP-91", "Amount"]];
+    M().cp91.detail.forEach((co) => co.offices.forEach((o) => rows.push([co.code, co.iot, o.fs, o.name, o.no, o.amount])));
+    downloadCSV("cp91-detail-" + S.currentMonth + ".csv", rows);
+  };
+  document.getElementById("cp91AbsCsv").onclick = () => downloadCSV("cp91-abstract-" + S.currentMonth + ".csv", [["Sr", "Code", "Company", "Description", "Amount"], ...cp91Abstract().map((r, i) => [i + 1, r.code, r.iot, r.desc, r.amount])]);
   const gen = document.getElementById("genCP91");
   if (gen) gen.onclick = async () => {
-    const c = M().cp91; const tot = c.rows.reduce((s, r) => s + num(r.amount), 0);
+    const c = M().cp91; const tot = cp91Abstract().reduce((s, r) => s + r.amount, 0);
     replaceBatch("CP91-GEN", [
       { folio: 3, source: "CP-91", code: "300101", dr: tot, cr: 0 },
       { folio: 3, source: "CP-91", code: "520603", dr: num(c.extra520603), cr: 0 },
       { folio: 3, source: "CP-91", code: "150101-6", dr: num(c.extra1501016), cr: 0 },
       { folio: 3, source: "CP-91", code: "520401", dr: 0, cr: tot + num(c.extra520603) + num(c.extra1501016) }
     ]);
-    await save(); toast("CP-91 lines ban gayi"); currentView = "summaries"; render();
+    await save(); toast("CP-91 lines ban gayi (Abstract total " + fmt(tot) + ")"); currentView = "summaries"; render();
   };
-  document.getElementById("printCP91").onclick = () => {
-    const c = M().cp91; const tot = c.rows.reduce((s, r) => s + num(r.amount), 0);
-    const rows = c.rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.code)}</td><td>${esc(r.iot)}</td><td>${esc(r.desc)}</td><td class="num">${fmt(r.amount)}</td></tr>`).join("");
-    printDoc("Detail of Free Electricity Supply (CP-91 Abstract)", `<table><tr><th>Sr</th><th>Code</th><th>Company</th><th>Description</th><th class="num">Amount</th></tr>${rows}<tr class="total"><td colspan="4">TOTAL</td><td class="num">${fmt(tot)}</td></tr></table>`);
+  document.getElementById("printCP91Detail").onclick = () => {
+    const body = M().cp91.detail.filter((co) => co.offices.length).map((co) => {
+      const tot = co.offices.reduce((s, o) => s + num(o.amount), 0);
+      const rows = co.offices.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.fs)}</td><td>${esc(o.name)}</td><td class="num">${fmt(o.no)}</td><td class="num">${fmt(o.amount)}</td></tr>`).join("");
+      return `<h3>${esc(co.iot)} (${esc(co.code)}) — Office/Code Wise Detail of Free Supply</h3><table><tr><th>Sr</th><th>F/S Code</th><th>Name and Address of Office</th><th class="num">No. of CP-91 Attached</th><th class="num">Amount</th></tr>${rows}<tr class="total"><td colspan="4">TOTAL</td><td class="num">${fmt(tot)}</td></tr></table>`;
+    }).join("");
+    printDoc("CP-91 — Office/Code Wise Detail of Free Supply", body);
+  };
+  document.getElementById("printCP91Abs").onclick = () => {
+    const abs = cp91Abstract(); const grand = abs.reduce((s, r) => s + r.amount, 0);
+    const rows = abs.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.code)}</td><td>${esc(r.iot)}</td><td>${esc(r.desc)}</td><td class="num">${fmt(r.amount)}</td></tr>`).join("");
+    printDoc("Detail of Free Electricity Supply (CP-91 Abstract)", `<table><tr><th>Sr</th><th>Code</th><th>Company (IOT)</th><th>Description</th><th class="num">Amount</th></tr>${rows}<tr class="total"><td colspan="4">TOTAL</td><td class="num">${fmt(grand)}</td></tr></table>`);
   };
 }
 
@@ -452,6 +711,20 @@ function vSummaries() {
   <div class="table-wrap"><table><tr><th>Folio</th><th>Source</th><th>GL Code</th><th class="num">Dr</th><th class="num">Cr</th><th>Batch</th><th></th></tr>${rows}
   <tr class="total"><td colspan="3">TOTAL</td><td class="num">${fmt(totDr)}</td><td class="num">${fmt(totCr)}</td><td colspan="2"></td></tr></table></div>`;
 }
+function parseSummarySheet(rows) {
+  // Aap ki SUMMARY sheet wala format: Folio blocks, Account Code col B, Dr col C, Cr col D
+  const out = []; let folio = "—", source = "";
+  rows.forEach((r) => {
+    const c = r.map((x) => String(x ?? "").trim());
+    if (/^\d+$/.test(c[0] || "") && c[2] && !/PARTICULARS/i.test(c[2]) && isNaN(num(c[2]))) { folio = c[0]; source = c[2]; return; }
+    const code = c[1] || "";
+    if (/^[0-9][0-9A-Za-z\-]*$/.test(code) && (c[2] !== "" || c[3] !== "") && !isNaN(num(c[2])) && !isNaN(num(c[3]))) {
+      if (num(c[2]) === 0 && num(c[3]) === 0 && c[2] === "" && c[3] === "") return;
+      out.push({ folio, source: source || "SUMMARY", code, dr: num(c[2]), cr: num(c[3]) });
+    }
+  });
+  return out;
+}
 function parseRows(rows) {
   const out = [];
   rows.forEach((r) => {
@@ -474,13 +747,20 @@ function bSummaries() {
     try {
       if (/\.csv$|\.txt$/i.test(f.name)) {
         const text = await f.text();
-        uploadPreview = parseRows(text.split(/\r?\n/).map((l) => l.split(/[,\t;]/)));
-      } else if (window.XLSX) {
-        const buf = await f.arrayBuffer();
-        const wb = XLSX.read(buf);
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        uploadPreview = parseRows(XLSX.utils.sheet_to_json(ws, { header: 1 }));
-      } else { toast("Excel parhne ke liye internet chahiye (SheetJS). CSV use karein ya paste karein."); return; }
+        const rows = text.split(/\r?\n/).map((l) => l.split(/[,\t;]/));
+        const sumParsed = parseSummarySheet(rows);
+        uploadPreview = sumParsed.length >= 5 ? sumParsed : parseRows(rows);
+      } else {
+        const sheets = await readWorkbookSheets(f);
+        const names = Object.keys(sheets);
+        const sumName = names.find((n) => /summary/i.test(n));
+        let parsed = [];
+        if (sumName) parsed = parseSummarySheet(sheets[sumName]);
+        if (parsed.length < 5) {
+          for (const n of names) { const p2 = parseSummarySheet(sheets[n]); if (p2.length > parsed.length) parsed = p2; }
+        }
+        uploadPreview = parsed.length >= 5 ? parsed : parseRows(sheets[sumName || names[0]]);
+      }
       toast(uploadPreview.length + " lines mili — preview dekhein");
       render();
     } catch (e) { toast("File parhne mein masla: " + e.message); }
@@ -655,10 +935,10 @@ function vAdvices() {
     <button class="btn gold" id="addAdv" ${locked() ? "disabled" : ""}>Add Advice</button>
   </div><div class="muted">Advice No khali chhodein to auto number ban jayega (maslan ${esc(nextAdviceNo("DR"))}).</div></div>
   <div class="card"><h2 style="margin-top:0">A) Debit Advices Issued (${dr.count}) — Total ${fmt(dr.tot)}</h2>
-  <div class="row"><button class="btn ghost" id="printDrList">Print Dr Advice List</button></div>
+  <div class="row"><button class="btn ghost" id="printDrList">Print Dr Advice List</button> <button class="btn ghost" id="csvDrList">CSV Download</button></div>
   <div class="table-wrap"><table><tr><th>Sr</th><th>Receiving Division</th><th>Advice No</th><th>Date</th><th class="num">Amount</th><th></th></tr>${dr.rows}</table></div></div>
   <div class="card"><h2 style="margin-top:0">B) Credit Advices Issued (${cr.count}) — Total ${fmt(cr.tot)}</h2>
-  <div class="row"><button class="btn ghost" id="printCrList">Print Cr Advice List</button></div>
+  <div class="row"><button class="btn ghost" id="printCrList">Print Cr Advice List</button> <button class="btn ghost" id="csvCrList">CSV Download</button></div>
   <div class="table-wrap"><table><tr><th>Sr</th><th>Receiving Division</th><th>Advice No</th><th>Date</th><th class="num">Amount</th><th></th></tr>${cr.rows}</table></div></div>`;
 }
 function bAdvices() {
@@ -691,6 +971,9 @@ function bAdvices() {
     printDoc(title, `<table><tr><th>Sr</th><th>Receiving Division</th><th>Advice No</th><th>Date</th><th class="num">Amount</th></tr>${rows}<tr class="total"><td colspan="4">TOTAL</td><td class="num">${fmt(tot)}</td></tr></table>`);
   };
   document.getElementById("printDrList").onclick = listPrint("DR", "Debit Advices Issued — List");
+  const advCsv = (type, name) => () => downloadCSV(name + "-" + S.currentMonth + ".csv", [["Sr", "Receiving Division", "Advice No", "Date", "Amount", "Narration"], ...M().advices.filter((a) => a.type === type).map((a, i) => [i + 1, a.to, a.no, a.date, a.amount, a.narration])]);
+  document.getElementById("csvDrList").onclick = advCsv("DR", "dr-advices");
+  document.getElementById("csvCrList").onclick = advCsv("CR", "cr-advices");
   document.getElementById("printCrList").onclick = listPrint("CR", "Credit Advices Issued — List");
 }
 

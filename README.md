@@ -6,10 +6,11 @@ Flow: **CP-41 + Payroll + CP-91 + Dr/Cr Advices + Imprest → Ledger Posting Sum
 ## Features
 - **Dashboard** — Trial totals, difference, advices, checks ek nazar mein
 - **Chart of Accounts** — 139 GL codes, Balance Sheet / Operating classification
-- **CP-41 Entry** — Sale categories + Taxes (OB/Assessment/Payments/CB) → Folio 3/4 auto
-- **Payroll Entry** — Pay + deductions → Folio 1 auto, Net Pay auto
-- **CP-91 Entry** — Company-wise free supply → CP-91 lines auto
-- **Ledger Posting Summaries** — Excel/CSV upload, copy-paste, manual lines, batches
+- **Opening Balances** — previous balances Excel/CSV upload/import (Code, Dr, Cr) + export + print
+- **CP-41 Entry** — Sale categories + Taxes (OB/Assessment/Payments/CB) → Folio 3/4 auto; Sale/Taxes upload + CSV export
+- **Payroll Entry** — Pay + deductions → Folio 1 auto, Net Pay auto; upload + CSV export
+- **CP-91 Detail & Abstract** — office-wise CP-91 detail (F/S Code, office, No, Amount) per company → Abstract auto; CP-91 sheet upload (aap ka format), detail/abstract print + CSV export
+- **Ledger Posting Summaries** — Excel/CSV upload (aap ki SUMMARY sheet wala format bhi auto-parsed — poori Monthly Account file upload kar dein, SUMMARY sheet khud import hogi), copy-paste, manual lines, batches, CSV export
 - **Journal Vouchers** — ek ek JV post karein (narration lazmi), print bhi
 - **Trial Balance** — Opening + During + Closing, printable, CSV export
 - **Dr/Cr Advices** — advice banana, har advice printable, lists printable
